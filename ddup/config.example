@@ -1,0 +1,37 @@
+# ddup global config
+
+# Ignore common build/dependency/cache directories
+exclude=node_modules
+exclude=.git
+exclude=.svn
+exclude=.hg
+exclude=venv
+exclude=.venv
+exclude=__pycache__
+exclude=.mypy_cache
+exclude=.pytest_cache
+exclude=build
+exclude=dist
+exclude=target
+exclude=.next
+exclude=.nuxt
+exclude=.output
+exclude=.cache
+exclude=.parcel-cache
+exclude=.turbo
+exclude=.gradle
+exclude=.maven
+exclude=.idea
+# OS metadata
+exclude=.DS_Store
+exclude=Thumbs.db
+exclude=desktop.ini
+exclude=.Spotlight-V100
+exclude=.Trashes
+exclude=.fseventsd
+exclude=.TemporaryItems
+exclude=.DocumentRevisions-V100
+
+exclude=*.pyc
+exclude=*.o
+exclude=*.dylib

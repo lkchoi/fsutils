@@ -1,0 +1,3 @@
+[workspace]
+members = ["mvsum", "dss", "ddup", "ssim", "fsutils", "fix-ext"]
+resolver = "2"

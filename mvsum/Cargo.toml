@@ -1,0 +1,11 @@
+[package]
+name = "mvsum"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+md5 = "0.7"
+sha1 = "0.10"
+blake3 = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }

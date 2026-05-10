@@ -1,0 +1,18 @@
+[package]
+name = "ddup"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+md5 = "0.7"
+sha2 = "0.10"
+glob = "0.3"
+walkdir = "2"
+xattr = "1"
+plist = "1"
+hex = "0.4"
+blake3 = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+dirs = "6"
+chrono = "0.4"

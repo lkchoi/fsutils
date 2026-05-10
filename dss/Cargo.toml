@@ -1,0 +1,11 @@
+[package]
+name = "dss"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+plist = "1"
+walkdir = "2"
+clap = { version = "4", features = ["derive"] }
+xattr = "1"
+glob = "0.3"
