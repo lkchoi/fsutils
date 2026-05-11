@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 
 #[derive(Parser, Debug)]
-#[command(name = "ddup", about = "Set file hash sums as Finder comments or tags")]
+#[command(name = "ddup", about = "Find and manage duplicate files")]
 struct Cli {
     #[arg(required = true)]
     paths: Vec<String>,
@@ -20,11 +20,12 @@ struct Cli {
     dry_run: bool,
     #[arg(short, long)]
     verbose: bool,
-    #[arg(short, long)]
-    duplicates: bool,
-    #[arg(long, requires = "duplicates")]
+    /// Tag files with their hash in Finder instead of finding duplicates
+    #[arg(long)]
+    tag: bool,
+    #[arg(long)]
     delete: bool,
-    #[arg(short, long, value_enum, requires = "delete")]
+    #[arg(short, long, value_enum, default_value = "best")]
     keep: Option<KeepStrategy>,
     /// Skip confirmation, move to Trash
     #[arg(long, requires = "delete", conflicts_with = "hard")]
@@ -35,13 +36,13 @@ struct Cli {
     #[arg(long)]
     no_cache: bool,
     /// Use perceptual similarity (SSIM) instead of exact hash for duplicate detection
-    #[arg(long, requires = "duplicates")]
+    #[arg(long, default_value_t = true)]
     ssim: bool,
-    /// SSIM threshold for similarity, 0.0-1.0 (default: 0.95)
-    #[arg(long, default_value = "0.95", requires = "ssim")]
+    /// SSIM threshold for similarity, 0.0-1.0
+    #[arg(long, default_value = "0.95")]
     threshold: f64,
-    /// Max Hamming distance for perceptual hash pre-filter (default: 10)
-    #[arg(long, default_value = "10", requires = "ssim")]
+    /// Max Hamming distance for perceptual hash pre-filter
+    #[arg(long, default_value = "10")]
     hash_threshold: u32,
     #[arg(short, long = "exclude", value_name = "PATTERN")]
     exclude: Vec<String>,
@@ -58,7 +59,20 @@ fn main() {
 
     let mut errors = 0;
 
-    if cli.duplicates {
+    if cli.tag {
+        for file in &files {
+            match hash_file_cached(file, &cli.algorithm, cli.no_cache) {
+                Ok(hash) => {
+                    if cli.dry_run || cli.verbose { println!("{hash}  {}", file.display()); }
+                    if cli.dry_run { continue; }
+                    if let Err(e) = set_finder_tag(file, &hash) {
+                        eprintln!("Error setting attribute on {}: {e}", file.display()); errors += 1;
+                    }
+                }
+                Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); errors += 1; }
+            }
+        }
+    } else {
         let dup_groups: Vec<(String, Vec<std::path::PathBuf>)> = if cli.ssim {
             let ssim_groups = ddup::ssim_duplicate_groups(&files, cli.threshold, cli.hash_threshold, &cli.algorithm, cli.no_cache);
             ssim_groups.into_iter().enumerate()
@@ -76,7 +90,7 @@ fn main() {
         };
 
         if dup_groups.is_empty() {
-            eprintln!("No duplicates found.");
+            // no output
         } else if cli.delete {
             let mut to_trash: Vec<std::path::PathBuf> = Vec::new();
             for (label, paths) in &dup_groups {
@@ -151,19 +165,6 @@ fn main() {
                     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
                     println!("  {} {}", format_size(size), path.display());
                 }
-            }
-        }
-    } else {
-        for file in &files {
-            match hash_file_cached(file, &cli.algorithm, cli.no_cache) {
-                Ok(hash) => {
-                    if cli.dry_run || cli.verbose { println!("{hash}  {}", file.display()); }
-                    if cli.dry_run { continue; }
-                    if let Err(e) = set_finder_tag(file, &hash) {
-                        eprintln!("Error setting attribute on {}: {e}", file.display()); errors += 1;
-                    }
-                }
-                Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); errors += 1; }
             }
         }
     }

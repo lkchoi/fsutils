@@ -1,13 +1,35 @@
 use img_hash::{HasherConfig, HashAlg, ImageHash};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 pub struct ImageEntry {
     pub path: PathBuf,
     pub hash: ImageHash,
 }
 
-pub fn load_and_hash(path: &Path) -> Result<ImageEntry, String> {
+const XATTR_PHASH: &str = "com.ssim.phash";
+const XATTR_PHASH_AT: &str = "com.ssim.phashed";
+
+fn get_cached_phash(path: &Path) -> Option<ImageHash> {
+    let ts_data = xattr::get(path, XATTR_PHASH_AT).ok()??;
+    let ts_str = String::from_utf8(ts_data).ok()?;
+    let hashed_at: u64 = ts_str.parse().ok()?;
+    let mtime = std::fs::metadata(path).ok()?.modified().ok()?
+        .duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
+    if mtime > hashed_at { return None; }
+    let hash_data = xattr::get(path, XATTR_PHASH).ok()??;
+    let encoded = String::from_utf8(hash_data).ok()?;
+    ImageHash::from_base64(&encoded).ok()
+}
+
+fn set_phash_cache(path: &Path, hash: &ImageHash) {
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs().to_string();
+    let _ = xattr::set(path, XATTR_PHASH, hash.to_base64().as_bytes());
+    let _ = xattr::set(path, XATTR_PHASH_AT, now.as_bytes());
+}
+
+fn compute_phash(path: &Path) -> Result<ImageHash, String> {
     let img = image::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
@@ -20,7 +42,17 @@ pub fn load_and_hash(path: &Path) -> Result<ImageEntry, String> {
         .hash_size(8, 8)
         .hash_alg(HashAlg::Gradient)
         .to_hasher();
-    let hash = hasher.hash_image(&old_dyn);
+    Ok(hasher.hash_image(&old_dyn))
+}
+
+pub fn load_and_hash(path: &Path) -> Result<ImageEntry, String> {
+    let hash = if let Some(cached) = get_cached_phash(path) {
+        cached
+    } else {
+        let h = compute_phash(path)?;
+        set_phash_cache(path, &h);
+        h
+    };
     Ok(ImageEntry {
         path: path.to_owned(),
         hash,

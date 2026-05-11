@@ -1496,6 +1496,7 @@ dependencies = [
  "image 0.25.10",
  "img_hash",
  "rayon",
+ "xattr",
 ]
 
 [[package]]
