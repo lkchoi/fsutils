@@ -16,3 +16,6 @@ blake3 = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 dirs = "6"
 chrono = "0.4"
+ssim = { path = "../ssim" }
+image = "0.25"
+rayon = "1"

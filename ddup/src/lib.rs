@@ -108,7 +108,7 @@ impl std::fmt::Display for HashAlgorithm {
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
-pub enum KeepStrategy { Newest, Oldest, Shallowest, Deepest, First }
+pub enum KeepStrategy { Newest, Oldest, Largest, Smallest, Shallowest, Deepest, First }
 
 // --- Hashing ---
 
@@ -232,13 +232,15 @@ pub fn file_mtime(path: &Path) -> u64 {
 
 pub fn path_depth(path: &Path) -> usize { path.components().count() }
 
-pub fn select_keep_index(paths: &[&PathBuf], strategy: &KeepStrategy) -> usize {
+pub fn select_keep_index<P: AsRef<Path>>(paths: &[P], strategy: &KeepStrategy) -> usize {
     match strategy {
-        KeepStrategy::Newest => paths.iter().enumerate().max_by_key(|(_, p)| file_mtime(p)).map(|(i, _)| i).unwrap_or(0),
-        KeepStrategy::Oldest => paths.iter().enumerate().min_by_key(|(_, p)| file_mtime(p)).map(|(i, _)| i).unwrap_or(0),
-        KeepStrategy::Shallowest => paths.iter().enumerate().min_by_key(|(_, p)| path_depth(p)).map(|(i, _)| i).unwrap_or(0),
-        KeepStrategy::Deepest => paths.iter().enumerate().max_by_key(|(_, p)| path_depth(p)).map(|(i, _)| i).unwrap_or(0),
-        KeepStrategy::First => paths.iter().enumerate().min_by_key(|(_, p)| p.to_string_lossy().to_string()).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Newest => paths.iter().enumerate().max_by_key(|(_, p)| file_mtime(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Oldest => paths.iter().enumerate().min_by_key(|(_, p)| file_mtime(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Largest => paths.iter().enumerate().max_by_key(|(_, p)| fs::metadata(p.as_ref()).map(|m| m.len()).unwrap_or(0)).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Smallest => paths.iter().enumerate().min_by_key(|(_, p)| fs::metadata(p.as_ref()).map(|m| m.len()).unwrap_or(0)).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Shallowest => paths.iter().enumerate().min_by_key(|(_, p)| path_depth(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Deepest => paths.iter().enumerate().max_by_key(|(_, p)| path_depth(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::First => paths.iter().enumerate().min_by_key(|(_, p)| p.as_ref().to_string_lossy().to_string()).map(|(i, _)| i).unwrap_or(0),
     }
 }
 
@@ -248,6 +250,24 @@ pub fn prompt_yn(msg: &str) -> bool {
     let mut input = String::new();
     io::stdin().lock().read_line(&mut input).ok();
     matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+pub enum DeleteAction { Trash, HardDelete, Abort }
+
+pub fn prompt_delete(msg: &str) -> DeleteAction {
+    eprint!("{msg} ");
+    io::stderr().flush().ok();
+    let mut input = String::new();
+    io::stdin().lock().read_line(&mut input).ok();
+    match input.trim().to_lowercase().as_str() {
+        "y" | "yes" => DeleteAction::Trash,
+        "h" => DeleteAction::HardDelete,
+        _ => DeleteAction::Abort,
+    }
+}
+
+pub fn hard_delete(path: &Path) -> io::Result<()> {
+    fs::remove_file(path)
 }
 
 // --- Path resolution ---
@@ -320,4 +340,98 @@ pub fn collect_dir_files(dir: &Path, exclude: &[glob::Pattern], files: &mut Vec<
     {
         if entry.file_type().is_file() { files.push(entry.into_path()); }
     }
+}
+
+// --- SSIM-based duplicate grouping ---
+
+const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "gif", "webp", "tiff", "tif"];
+
+fn is_image_file(path: &Path) -> bool {
+    path.extension().map_or(false, |ext| {
+        IMAGE_EXTENSIONS.contains(&ext.to_string_lossy().to_lowercase().as_str())
+    })
+}
+
+pub fn ssim_duplicate_groups(
+    files: &[PathBuf], threshold: f64, hash_threshold: u32,
+    algorithm: &HashAlgorithm, no_cache: bool,
+) -> Vec<Vec<PathBuf>> {
+    use rayon::prelude::*;
+
+    let mut result: Vec<Vec<PathBuf>> = Vec::new();
+
+    // --- Images: perceptual similarity via SSIM ---
+    let image_files: Vec<&PathBuf> = files.iter().filter(|p| is_image_file(p)).collect();
+    let entries: Vec<ssim::hash::ImageEntry> = image_files.par_iter()
+        .filter_map(|p| match ssim::hash::load_and_hash(p) {
+            Ok(entry) => Some(entry),
+            Err(e) => { eprintln!("Warning: {}", e); None }
+        })
+        .collect();
+
+    if !entries.is_empty() {
+        let candidates = ssim::hash::candidate_pairs(&entries, hash_threshold);
+        let matches: Vec<(usize, usize)> = candidates.par_iter()
+            .filter_map(|&(i, j)| {
+                let img_a = image::open(&entries[i].path).ok()?;
+                let img_b = image::open(&entries[j].path).ok()?;
+                let score = ssim::ssim::compute_ssim(&img_a, &img_b);
+                if score >= threshold { Some((i, j)) } else { None }
+            })
+            .collect();
+
+        if !matches.is_empty() {
+            let n = entries.len();
+            let mut parent: Vec<usize> = (0..n).collect();
+            let mut rank = vec![0usize; n];
+
+            fn find(parent: &mut Vec<usize>, i: usize) -> usize {
+                if parent[i] != i { parent[i] = find(parent, parent[i]); }
+                parent[i]
+            }
+            fn union(parent: &mut Vec<usize>, rank: &mut Vec<usize>, a: usize, b: usize) {
+                let ra = find(parent, a);
+                let rb = find(parent, b);
+                if ra == rb { return; }
+                if rank[ra] < rank[rb] { parent[ra] = rb; }
+                else if rank[ra] > rank[rb] { parent[rb] = ra; }
+                else { parent[rb] = ra; rank[ra] += 1; }
+            }
+
+            for &(i, j) in &matches {
+                union(&mut parent, &mut rank, i, j);
+            }
+
+            let mut groups: HashMap<usize, Vec<usize>> = HashMap::new();
+            for idx in 0..n {
+                let root = find(&mut parent, idx);
+                groups.entry(root).or_default().push(idx);
+            }
+
+            for mut group in groups.into_values().filter(|g| g.len() > 1) {
+                let mut paths: Vec<PathBuf> = group.drain(..).map(|idx| entries[idx].path.clone()).collect();
+                paths.sort();
+                result.push(paths);
+            }
+        }
+    }
+
+    // --- Non-images: exact hash ---
+    let other_files: Vec<&PathBuf> = files.iter().filter(|p| !is_image_file(p)).collect();
+    if !other_files.is_empty() {
+        let mut hash_map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+        for file in &other_files {
+            match hash_file_cached(file, algorithm, no_cache) {
+                Ok(hash) => { hash_map.entry(hash).or_default().push((*file).clone()); }
+                Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); }
+            }
+        }
+        for (_, mut paths) in hash_map.into_iter().filter(|(_, p)| p.len() > 1) {
+            paths.sort();
+            result.push(paths);
+        }
+    }
+
+    result.sort_by(|a, b| a[0].cmp(&b[0]));
+    result
 }

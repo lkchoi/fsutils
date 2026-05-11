@@ -41,6 +41,15 @@ enum Command {
         no_cache: bool,
         #[arg(short, long = "exclude", value_name = "PATTERN")]
         exclude: Vec<String>,
+        /// Use perceptual similarity (SSIM) instead of exact hash for duplicate detection
+        #[arg(long, requires = "duplicates")]
+        ssim: bool,
+        /// SSIM threshold for similarity, 0.0-1.0
+        #[arg(long, default_value = "0.95", requires = "ssim")]
+        threshold: f64,
+        /// Max Hamming distance for perceptual hash pre-filter
+        #[arg(long, default_value = "10", requires = "ssim")]
+        hash_threshold: u32,
     },
     /// Finder metadata utilities
     Dss {
@@ -102,8 +111,8 @@ fn main() {
     let code = match cli.command {
         Command::Mvsum { paths, algorithm, verbose } =>
             mvsum::run(&paths, &algorithm, verbose),
-        Command::Ddup { paths, algorithm, recursive, dry_run, verbose, duplicates, delete, keep, no_cache, exclude } => {
-            use ddup::{compile_excludes, format_size, hash_file_cached, move_to_trash, prompt_yn, resolve_paths, select_keep_index, set_finder_tag};
+        Command::Ddup { paths, algorithm, recursive, dry_run, verbose, duplicates, delete, keep, no_cache, exclude, ssim, threshold, hash_threshold } => {
+            use ddup::{compile_excludes, format_size, hash_file_cached, move_to_trash, hard_delete, prompt_delete, resolve_paths, select_keep_index, set_finder_tag, ssim_duplicate_groups, DeleteAction};
             use std::collections::HashMap;
             use std::fs;
 
@@ -113,20 +122,28 @@ fn main() {
 
             let mut errors = 0i32;
             if duplicates {
-                let mut hash_map: HashMap<String, Vec<&PathBuf>> = HashMap::new();
-                for file in &files {
-                    match hash_file_cached(file, &algorithm, no_cache) {
-                        Ok(hash) => { hash_map.entry(hash).or_default().push(file); }
-                        Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); errors += 1; }
+                let dup_groups: Vec<(String, Vec<PathBuf>)> = if ssim {
+                    let ssim_groups = ssim_duplicate_groups(&files, threshold, hash_threshold, &algorithm, no_cache);
+                    ssim_groups.into_iter().enumerate()
+                        .map(|(i, group)| (format!("group {}", i + 1), group))
+                        .collect()
+                } else {
+                    let mut hash_map: HashMap<String, Vec<PathBuf>> = HashMap::new();
+                    for file in &files {
+                        match hash_file_cached(file, &algorithm, no_cache) {
+                            Ok(hash) => { hash_map.entry(hash).or_default().push(file.clone()); }
+                            Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); errors += 1; }
+                        }
                     }
-                }
-                let dup_groups: Vec<_> = hash_map.into_iter().filter(|(_, p)| p.len() > 1).collect();
+                    hash_map.into_iter().filter(|(_, p)| p.len() > 1).collect()
+                };
+
                 if dup_groups.is_empty() {
                     eprintln!("No duplicates found.");
                 } else if delete {
                     let mut to_trash: Vec<PathBuf> = Vec::new();
-                    for (hash, paths) in &dup_groups {
-                        println!("{hash}");
+                    for (label, paths) in &dup_groups {
+                        println!("{label}");
                         if let Some(ref strategy) = keep {
                             let keep_idx = select_keep_index(paths, strategy);
                             for (i, path) in paths.iter().enumerate() {
@@ -136,14 +153,27 @@ fn main() {
                             }
                         }
                     }
-                    if !to_trash.is_empty() && prompt_yn(&format!("Move {} file(s) to Trash? [y/N]:", to_trash.len())) {
-                        for path in &to_trash {
-                            if let Err(e) = move_to_trash(path) { eprintln!("Error trashing {}: {e}", path.display()); errors += 1; }
+                    let total_size: u64 = to_trash.iter()
+                        .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+                        .sum();
+                    if !to_trash.is_empty() {
+                        match prompt_delete(&format!("Delete {} file(s) ({})? [y]Trash / [h]ard delete / [N]o:", to_trash.len(), format_size(total_size))) {
+                            DeleteAction::Trash => {
+                                for path in &to_trash {
+                                    if let Err(e) = move_to_trash(path) { eprintln!("Error trashing {}: {e}", path.display()); errors += 1; }
+                                }
+                            }
+                            DeleteAction::HardDelete => {
+                                for path in &to_trash {
+                                    if let Err(e) = hard_delete(path) { eprintln!("Error deleting {}: {e}", path.display()); errors += 1; }
+                                }
+                            }
+                            DeleteAction::Abort => { eprintln!("Aborted."); }
                         }
                     }
                 } else {
-                    for (hash, paths) in &dup_groups {
-                        println!("{hash}");
+                    for (label, paths) in &dup_groups {
+                        println!("{label}");
                         for path in paths {
                             let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
                             println!("  {} {}", format_size(size), path.display());

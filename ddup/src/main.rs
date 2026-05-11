@@ -1,7 +1,8 @@
 use clap::Parser;
 use ddup::{
-    apply_config, compile_excludes, format_size, hash_file_cached, move_to_trash,
-    prompt_yn, resolve_paths, select_keep_index, set_finder_tag, HashAlgorithm, KeepStrategy,
+    apply_config, compile_excludes, format_size, hash_file_cached, move_to_trash, hard_delete,
+    prompt_delete, resolve_paths, select_keep_index, set_finder_tag,
+    DeleteAction, HashAlgorithm, KeepStrategy,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -27,6 +28,15 @@ struct Cli {
     keep: Option<KeepStrategy>,
     #[arg(long)]
     no_cache: bool,
+    /// Use perceptual similarity (SSIM) instead of exact hash for duplicate detection
+    #[arg(long, requires = "duplicates")]
+    ssim: bool,
+    /// SSIM threshold for similarity, 0.0-1.0 (default: 0.95)
+    #[arg(long, default_value = "0.95", requires = "ssim")]
+    threshold: f64,
+    /// Max Hamming distance for perceptual hash pre-filter (default: 10)
+    #[arg(long, default_value = "10", requires = "ssim")]
+    hash_threshold: u32,
     #[arg(short, long = "exclude", value_name = "PATTERN")]
     exclude: Vec<String>,
 }
@@ -43,22 +53,28 @@ fn main() {
     let mut errors = 0;
 
     if cli.duplicates {
-        let mut hash_map: HashMap<String, Vec<&std::path::PathBuf>> = HashMap::new();
-        for file in &files {
-            match hash_file_cached(file, &cli.algorithm, cli.no_cache) {
-                Ok(hash) => { hash_map.entry(hash).or_default().push(file); }
-                Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); errors += 1; }
+        let dup_groups: Vec<(String, Vec<std::path::PathBuf>)> = if cli.ssim {
+            let ssim_groups = ddup::ssim_duplicate_groups(&files, cli.threshold, cli.hash_threshold, &cli.algorithm, cli.no_cache);
+            ssim_groups.into_iter().enumerate()
+                .map(|(i, group)| (format!("group {}", i + 1), group))
+                .collect()
+        } else {
+            let mut hash_map: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
+            for file in &files {
+                match hash_file_cached(file, &cli.algorithm, cli.no_cache) {
+                    Ok(hash) => { hash_map.entry(hash).or_default().push(file.clone()); }
+                    Err(e) => { eprintln!("Error hashing {}: {e}", file.display()); errors += 1; }
+                }
             }
-        }
-
-        let dup_groups: Vec<_> = hash_map.into_iter().filter(|(_, paths)| paths.len() > 1).collect();
+            hash_map.into_iter().filter(|(_, paths)| paths.len() > 1).collect()
+        };
 
         if dup_groups.is_empty() {
             eprintln!("No duplicates found.");
         } else if cli.delete {
             let mut to_trash: Vec<std::path::PathBuf> = Vec::new();
-            for (hash, paths) in &dup_groups {
-                println!("{hash}");
+            for (label, paths) in &dup_groups {
+                println!("{label}");
                 if let Some(ref strategy) = cli.keep {
                     let keep_idx = select_keep_index(paths, strategy);
                     for (i, path) in paths.iter().enumerate() {
@@ -88,20 +104,35 @@ fn main() {
             if to_trash.is_empty() {
                 eprintln!("Nothing to delete.");
             } else {
+                let total_size: u64 = to_trash.iter()
+                    .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+                    .sum();
                 println!();
-                if prompt_yn(&format!("Move {} file(s) to Trash? [y/N]:", to_trash.len())) {
-                    for path in &to_trash {
-                        match move_to_trash(path) {
-                            Ok(()) => { if cli.verbose { eprintln!("Trashed: {}", path.display()); } }
-                            Err(e) => { eprintln!("Error trashing {}: {e}", path.display()); errors += 1; }
+                match prompt_delete(&format!("Delete {} file(s) ({})? [y]Trash / [h]ard delete / [N]o:", to_trash.len(), format_size(total_size))) {
+                    DeleteAction::Trash => {
+                        for path in &to_trash {
+                            match move_to_trash(path) {
+                                Ok(()) => { if cli.verbose { eprintln!("Trashed: {}", path.display()); } }
+                                Err(e) => { eprintln!("Error trashing {}: {e}", path.display()); errors += 1; }
+                            }
                         }
+                        if errors == 0 { eprintln!("Moved {} file(s) to Trash.", to_trash.len()); }
                     }
-                    if errors == 0 { eprintln!("Moved {} file(s) to Trash.", to_trash.len()); }
-                } else { eprintln!("Aborted."); }
+                    DeleteAction::HardDelete => {
+                        for path in &to_trash {
+                            match hard_delete(path) {
+                                Ok(()) => { if cli.verbose { eprintln!("Deleted: {}", path.display()); } }
+                                Err(e) => { eprintln!("Error deleting {}: {e}", path.display()); errors += 1; }
+                            }
+                        }
+                        if errors == 0 { eprintln!("Deleted {} file(s).", to_trash.len()); }
+                    }
+                    DeleteAction::Abort => { eprintln!("Aborted."); }
+                }
             }
         } else {
-            for (hash, paths) in &dup_groups {
-                println!("{hash}");
+            for (label, paths) in &dup_groups {
+                println!("{label}");
                 for path in paths {
                     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
                     println!("  {} {}", format_size(size), path.display());
