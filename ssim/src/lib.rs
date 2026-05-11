@@ -7,21 +7,49 @@ use rayon::prelude::*;
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "gif", "webp", "tiff", "tif"];
 
-pub fn discover_images(dir: &PathBuf) -> Vec<PathBuf> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(e) => { eprintln!("Error reading directory {}: {}", dir.display(), e); std::process::exit(1); }
-    };
-    let mut paths: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry.path().extension().map_or(false, |ext| {
-                IMAGE_EXTENSIONS.contains(&ext.to_string_lossy().to_lowercase().as_str())
-            })
-        })
-        .map(|entry| entry.path())
-        .collect();
+fn is_image(path: &PathBuf) -> bool {
+    path.extension().map_or(false, |ext| {
+        IMAGE_EXTENSIONS.contains(&ext.to_string_lossy().to_lowercase().as_str())
+    })
+}
+
+pub fn resolve_paths(inputs: &[String]) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for input in inputs {
+        let p = PathBuf::from(input);
+        if p.is_dir() {
+            // Directory: scan for images
+            if let Ok(entries) = std::fs::read_dir(&p) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if path.is_file() && is_image(&path) {
+                        paths.push(path);
+                    }
+                }
+            } else {
+                eprintln!("Error reading directory: {}", p.display());
+            }
+        } else if p.is_file() {
+            // Explicit file: use directly (even if not an image extension — let image crate decide)
+            paths.push(p);
+        } else {
+            // Glob pattern
+            match glob::glob(input) {
+                Ok(entries) => {
+                    for entry in entries {
+                        match entry {
+                            Ok(path) if path.is_file() && is_image(&path) => paths.push(path),
+                            Ok(_) => {}
+                            Err(e) => eprintln!("Warning: {}", e),
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Invalid glob pattern '{}': {}", input, e),
+            }
+        }
+    }
     paths.sort();
+    paths.dedup();
     paths
 }
 
@@ -39,9 +67,9 @@ fn union(parent: &mut Vec<usize>, rank: &mut Vec<usize>, a: usize, b: usize) {
     else { parent[rb] = ra; rank[ra] += 1; }
 }
 
-pub fn run(directory: &PathBuf, threshold: f64, hash_threshold: u32) -> i32 {
-    let paths = discover_images(directory);
-    if paths.is_empty() { eprintln!("No images found in {}", directory.display()); return 0; }
+pub fn run(inputs: &[String], threshold: f64, hash_threshold: u32) -> i32 {
+    let paths = resolve_paths(inputs);
+    if paths.is_empty() { eprintln!("No images found matching the given inputs"); return 0; }
 
     let entries: Vec<hash::ImageEntry> = paths.par_iter()
         .filter_map(|p| match hash::load_and_hash(p) {

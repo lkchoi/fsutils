@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+glob = "0.3"
 image = "0.25"
 img_hash = "3"
 rayon = "1"

@@ -1489,6 +1489,7 @@ name = "ssim"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "glob",
  "image 0.25.10",
  "img_hash",
  "rayon",

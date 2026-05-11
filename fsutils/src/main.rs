@@ -49,7 +49,9 @@ enum Command {
     },
     /// Find near-duplicate images using perceptual hashing and SSIM
     Ssim {
-        directory: PathBuf,
+        /// Files, directories, or glob patterns
+        #[arg(required = true)]
+        paths: Vec<String>,
         #[arg(long, default_value = "0.95")]
         threshold: f64,
         #[arg(long, default_value = "10")]
@@ -170,8 +172,8 @@ fn main() {
             DssCommand::Comment { comment, paths, recursive, exclude, dry_run } =>
                 dss::run_comment(&comment, &paths, recursive, &exclude, dry_run),
         },
-        Command::Ssim { directory, threshold, hash_threshold } =>
-            ssim::run(&directory, threshold, hash_threshold),
+        Command::Ssim { paths, threshold, hash_threshold } =>
+            ssim::run(&paths, threshold, hash_threshold),
         Command::FixExt { paths, dry_run, verbose } =>
             fix_ext::run(&paths, dry_run, verbose),
     };
