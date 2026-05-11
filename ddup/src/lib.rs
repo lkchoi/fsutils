@@ -108,7 +108,7 @@ impl std::fmt::Display for HashAlgorithm {
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
-pub enum KeepStrategy { Newest, Oldest, Largest, Smallest, Shallowest, Deepest, First }
+pub enum KeepStrategy { Newest, Oldest, Largest, Smallest, Best, Shallowest, Deepest, First }
 
 // --- Hashing ---
 
@@ -232,24 +232,55 @@ pub fn file_mtime(path: &Path) -> u64 {
 
 pub fn path_depth(path: &Path) -> usize { path.components().count() }
 
+fn image_resolution(path: &Path) -> u64 {
+    image::image_dimensions(path)
+        .map(|(w, h)| w as u64 * h as u64)
+        .unwrap_or(0)
+}
+
+fn format_rank(path: &Path) -> u32 {
+    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).as_deref() {
+        Some("webp") => 5,
+        Some("png") => 4,
+        Some("tiff") | Some("tif") => 3,
+        Some("jpg") | Some("jpeg") => 2,
+        Some("gif") => 1,
+        Some("bmp") => 0,
+        _ => 0,
+    }
+}
+
+fn best_score(path: &Path) -> (u64, u32) {
+    (image_resolution(path), format_rank(path))
+}
+
 pub fn select_keep_index<P: AsRef<Path>>(paths: &[P], strategy: &KeepStrategy) -> usize {
     match strategy {
         KeepStrategy::Newest => paths.iter().enumerate().max_by_key(|(_, p)| file_mtime(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
         KeepStrategy::Oldest => paths.iter().enumerate().min_by_key(|(_, p)| file_mtime(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
         KeepStrategy::Largest => paths.iter().enumerate().max_by_key(|(_, p)| fs::metadata(p.as_ref()).map(|m| m.len()).unwrap_or(0)).map(|(i, _)| i).unwrap_or(0),
         KeepStrategy::Smallest => paths.iter().enumerate().min_by_key(|(_, p)| fs::metadata(p.as_ref()).map(|m| m.len()).unwrap_or(0)).map(|(i, _)| i).unwrap_or(0),
+        KeepStrategy::Best => paths.iter().enumerate().max_by_key(|(_, p)| best_score(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
         KeepStrategy::Shallowest => paths.iter().enumerate().min_by_key(|(_, p)| path_depth(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
         KeepStrategy::Deepest => paths.iter().enumerate().max_by_key(|(_, p)| path_depth(p.as_ref())).map(|(i, _)| i).unwrap_or(0),
         KeepStrategy::First => paths.iter().enumerate().min_by_key(|(_, p)| p.as_ref().to_string_lossy().to_string()).map(|(i, _)| i).unwrap_or(0),
     }
 }
 
+pub fn read_tty_line() -> String {
+    let mut input = String::new();
+    if let Ok(tty) = fs::File::open("/dev/tty") {
+        io::BufReader::new(tty).read_line(&mut input).ok();
+    } else {
+        io::stdin().lock().read_line(&mut input).ok();
+    }
+    input
+}
+
 pub fn prompt_yn(msg: &str) -> bool {
     eprint!("{msg} ");
     io::stderr().flush().ok();
-    let mut input = String::new();
-    io::stdin().lock().read_line(&mut input).ok();
-    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+    matches!(read_tty_line().trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 pub enum DeleteAction { Trash, HardDelete, Abort }
@@ -257,9 +288,7 @@ pub enum DeleteAction { Trash, HardDelete, Abort }
 pub fn prompt_delete(msg: &str) -> DeleteAction {
     eprint!("{msg} ");
     io::stderr().flush().ok();
-    let mut input = String::new();
-    io::stdin().lock().read_line(&mut input).ok();
-    match input.trim().to_lowercase().as_str() {
+    match read_tty_line().trim().to_lowercase().as_str() {
         "y" | "yes" => DeleteAction::Trash,
         "h" => DeleteAction::HardDelete,
         _ => DeleteAction::Abort,

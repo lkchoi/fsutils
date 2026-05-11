@@ -26,6 +26,12 @@ struct Cli {
     delete: bool,
     #[arg(short, long, value_enum, requires = "delete")]
     keep: Option<KeepStrategy>,
+    /// Skip confirmation, move to Trash
+    #[arg(long, requires = "delete", conflicts_with = "hard")]
+    yes: bool,
+    /// Skip confirmation, permanently delete
+    #[arg(long, requires = "delete", conflicts_with = "yes")]
+    hard: bool,
     #[arg(long)]
     no_cache: bool,
     /// Use perceptual similarity (SSIM) instead of exact hash for duplicate detection
@@ -88,9 +94,8 @@ fn main() {
                         println!("  [{}] {} {}", i + 1, format_size(size), path.display());
                     }
                     eprint!("Keep which file? [1]: ");
-                    use std::io::BufRead as _;
-                    let mut input = String::new();
-                    std::io::stdin().lock().read_line(&mut input).ok();
+                    std::io::Write::flush(&mut std::io::stderr()).ok();
+                    let input = ddup::read_tty_line();
                     let keep_idx = match input.trim().parse::<usize>() {
                         Ok(n) if n >= 1 && n <= paths.len() => n - 1,
                         Ok(_) | Err(_) if input.trim().is_empty() => 0,
@@ -107,8 +112,17 @@ fn main() {
                 let total_size: u64 = to_trash.iter()
                     .map(|p| fs::metadata(p).map(|m| m.len()).unwrap_or(0))
                     .sum();
-                println!();
-                match prompt_delete(&format!("Delete {} file(s) ({})? [y]Trash / [h]ard delete / [N]o:", to_trash.len(), format_size(total_size))) {
+                let action = if cli.yes {
+                    eprintln!("Trashing {} file(s) ({}).", to_trash.len(), format_size(total_size));
+                    DeleteAction::Trash
+                } else if cli.hard {
+                    eprintln!("Hard deleting {} file(s) ({}).", to_trash.len(), format_size(total_size));
+                    DeleteAction::HardDelete
+                } else {
+                    println!();
+                    prompt_delete(&format!("Delete {} file(s) ({})? [y]Trash / [h]ard delete / [N]o:", to_trash.len(), format_size(total_size)))
+                };
+                match action {
                     DeleteAction::Trash => {
                         for path in &to_trash {
                             match move_to_trash(path) {

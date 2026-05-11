@@ -1,4 +1,5 @@
 use img_hash::{HasherConfig, HashAlg, ImageHash};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct ImageEntry {
@@ -7,7 +8,6 @@ pub struct ImageEntry {
 }
 
 pub fn load_and_hash(path: &Path) -> Result<ImageEntry, String> {
-    // Load with image 0.25 (has format support), then convert to img_hash's image 0.23 type
     let img = image::open(path).map_err(|e| format!("{}: {}", path.display(), e))?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
@@ -27,15 +27,70 @@ pub fn load_and_hash(path: &Path) -> Result<ImageEntry, String> {
     })
 }
 
-pub fn candidate_pairs(entries: &[ImageEntry], threshold: u32) -> Vec<(usize, usize)> {
-    let mut pairs = Vec::new();
-    for i in 0..entries.len() {
-        for j in (i + 1)..entries.len() {
-            let dist = entries[i].hash.dist(&entries[j].hash);
-            if dist <= threshold {
-                pairs.push((i, j));
+// --- BK-tree for Hamming distance ---
+
+struct BkNode {
+    index: usize,
+    children: HashMap<u32, BkNode>,
+}
+
+struct BkTree {
+    root: Option<BkNode>,
+}
+
+impl BkTree {
+    fn new() -> Self {
+        BkTree { root: None }
+    }
+
+    fn insert(&mut self, index: usize, entries: &[ImageEntry]) {
+        match self.root {
+            None => {
+                self.root = Some(BkNode { index, children: HashMap::new() });
+            }
+            Some(ref mut root) => {
+                Self::insert_node(root, index, entries);
             }
         }
     }
+
+    fn insert_node(node: &mut BkNode, index: usize, entries: &[ImageEntry]) {
+        let dist = entries[node.index].hash.dist(&entries[index].hash);
+        match node.children.get_mut(&dist) {
+            Some(child) => Self::insert_node(child, index, entries),
+            None => { node.children.insert(dist, BkNode { index, children: HashMap::new() }); }
+        }
+    }
+
+    fn query(&self, query_index: usize, threshold: u32, entries: &[ImageEntry], results: &mut Vec<(usize, usize)>) {
+        if let Some(ref root) = self.root {
+            Self::query_node(root, query_index, threshold, entries, results);
+        }
+    }
+
+    fn query_node(node: &BkNode, query_index: usize, threshold: u32, entries: &[ImageEntry], results: &mut Vec<(usize, usize)>) {
+        let dist = entries[node.index].hash.dist(&entries[query_index].hash);
+        if dist <= threshold && node.index < query_index {
+            results.push((node.index, query_index));
+        }
+        let lo = dist.saturating_sub(threshold);
+        let hi = dist + threshold;
+        for (&edge_dist, child) in &node.children {
+            if edge_dist >= lo && edge_dist <= hi {
+                Self::query_node(child, query_index, threshold, entries, results);
+            }
+        }
+    }
+}
+
+pub fn candidate_pairs(entries: &[ImageEntry], threshold: u32) -> Vec<(usize, usize)> {
+    let mut tree = BkTree::new();
+    let mut pairs = Vec::new();
+
+    for i in 0..entries.len() {
+        tree.query(i, threshold, entries, &mut pairs);
+        tree.insert(i, entries);
+    }
+
     pairs
 }
