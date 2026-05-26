@@ -187,12 +187,17 @@ pub fn set_finder_tag(path: &Path, tag: &str) -> io::Result<()> {
         _ => Vec::new(),
     };
     tags.retain(|v| {
-        if let plist::Value::String(s) = v { !s.starts_with("hash:") && !s.starts_with("hashed:") }
+        if let plist::Value::String(s) = v { !s.starts_with("hash:") && !s.starts_with("hashed:") && !s.starts_with("phash:") }
         else { true }
     });
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
     tags.push(plist::Value::String(format!("hash:{tag}")));
     tags.push(plist::Value::String(format!("hashed:{now}")));
+    if let Ok(Some(phash_data)) = xattr::get(path, "com.ssim.phash") {
+        if let Ok(phash) = String::from_utf8(phash_data) {
+            tags.push(plist::Value::String(format!("phash:{phash}")));
+        }
+    }
     let mut buf = Vec::new();
     plist::Value::Array(tags).to_writer_binary(&mut buf)
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;

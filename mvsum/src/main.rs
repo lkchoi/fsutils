@@ -7,7 +7,7 @@ struct Cli {
     #[arg(required = true)]
     paths: Vec<String>,
 
-    #[arg(short, long, value_enum, default_value_t = Algorithm::Md5)]
+    #[arg(short, long, value_enum, default_value_t = Algorithm::Xxh3)]
     algorithm: Algorithm,
 
     #[arg(short, long)]
