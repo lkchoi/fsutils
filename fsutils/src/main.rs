@@ -31,15 +31,15 @@ enum Command {
         dry_run: bool,
         #[arg(short, long)]
         verbose: bool,
-        #[arg(long)]
+        #[arg(long, default_value_t = true)]
         delete: bool,
         #[arg(short, long, value_enum, default_value = "best")]
         keep: Option<ddup::KeepStrategy>,
         /// Skip confirmation, move to Trash
-        #[arg(long, requires = "delete", conflicts_with = "hard")]
+        #[arg(long, conflicts_with = "hard")]
         yes: bool,
         /// Skip confirmation, permanently delete
-        #[arg(long, requires = "delete", conflicts_with = "yes")]
+        #[arg(long, conflicts_with = "yes")]
         hard: bool,
         #[arg(long)]
         no_cache: bool,
@@ -66,6 +66,18 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<String>,
         #[arg(long, default_value = "0.95")]
+        threshold: f64,
+        #[arg(long, default_value = "10")]
+        hash_threshold: u32,
+    },
+    /// Find images similar to a reference image
+    Similar {
+        /// Reference image to compare against
+        image: String,
+        /// Directories to search (default: current directory)
+        #[arg(default_value = ".")]
+        dirs: Vec<String>,
+        #[arg(long, default_value = "0.80")]
         threshold: f64,
         #[arg(long, default_value = "10")]
         hash_threshold: u32,
@@ -227,6 +239,21 @@ fn main() {
         },
         Command::Ssim { paths, threshold, hash_threshold } =>
             ssim::run(&paths, threshold, hash_threshold),
+        Command::Similar { image, dirs, threshold, hash_threshold } => {
+            match ssim::find_similar(&image, &dirs, threshold, hash_threshold) {
+                Ok(matches) => {
+                    if matches.is_empty() {
+                        eprintln!("No similar images found.");
+                    } else {
+                        for m in &matches {
+                            println!("{:.4} {}", m.score, m.path.display());
+                        }
+                    }
+                    0
+                }
+                Err(e) => { eprintln!("Error: {}", e); 1 }
+            }
+        }
         Command::FixExt { paths, dry_run, verbose } =>
             fix_ext::run(&paths, dry_run, verbose),
     };

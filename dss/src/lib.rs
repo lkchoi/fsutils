@@ -253,3 +253,194 @@ fn log2(n: u32) -> u32 {
     debug_assert!(n.is_power_of_two());
     n.trailing_zeros()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // --- math helpers ---
+
+    #[test]
+    fn next_pow2_values() {
+        assert_eq!(next_pow2(1), 32);
+        assert_eq!(next_pow2(32), 32);
+        assert_eq!(next_pow2(33), 64);
+        assert_eq!(next_pow2(64), 64);
+        assert_eq!(next_pow2(100), 128);
+    }
+
+    #[test]
+    fn align_up_values() {
+        assert_eq!(align_up(0, 32), 0);
+        assert_eq!(align_up(1, 32), 32);
+        assert_eq!(align_up(32, 32), 32);
+        assert_eq!(align_up(33, 32), 64);
+    }
+
+    #[test]
+    fn log2_powers_of_two() {
+        assert_eq!(log2(1), 0);
+        assert_eq!(log2(2), 1);
+        assert_eq!(log2(32), 5);
+        assert_eq!(log2(1024), 10);
+    }
+
+    // --- encode_record / encode_blob ---
+
+    #[test]
+    fn encode_blob_prepends_length() {
+        let data = b"hello";
+        let blob = encode_blob(data);
+        assert_eq!(&blob[..4], &(5u32).to_be_bytes());
+        assert_eq!(&blob[4..], b"hello");
+    }
+
+    #[test]
+    fn encode_record_has_filename_and_ids() {
+        let rec = encode_record(".", b"icvp", b"blob", &[0xAA]);
+        // filename "." is 1 UTF-16 char
+        assert_eq!(&rec[..4], &(1u32).to_be_bytes());
+        // UTF-16 for '.'
+        assert_eq!(&rec[4..6], &(b'.' as u16).to_be_bytes());
+        // structure_id + data_type
+        assert_eq!(&rec[6..10], b"icvp");
+        assert_eq!(&rec[10..14], b"blob");
+        assert_eq!(rec[14], 0xAA);
+    }
+
+    // --- build_icvp_plist ---
+
+    #[test]
+    fn build_icvp_plist_is_valid_plist() {
+        let data = build_icvp_plist(128.0, "size", true);
+        let val = plist::Value::from_reader(std::io::Cursor::new(&data)).unwrap();
+        let dict = val.as_dictionary().unwrap();
+        assert_eq!(dict.get("iconSize").unwrap().as_real(), Some(128.0));
+        assert_eq!(dict.get("arrangeBy").unwrap().as_string(), Some("size"));
+        assert_eq!(dict.get("showIconPreview").unwrap().as_boolean(), Some(true));
+    }
+
+    // --- build_ds_store ---
+
+    #[test]
+    fn build_ds_store_starts_with_magic() {
+        let data = build_ds_store(128, "size", true).unwrap();
+        // DS_Store starts with 0x00000001 then "Bud1"
+        assert_eq!(&data[..4], &[0, 0, 0, 1]);
+        assert_eq!(&data[4..8], b"Bud1");
+    }
+
+    #[test]
+    fn build_ds_store_min_size() {
+        let data = build_ds_store(64, "name", false).unwrap();
+        // Should be a reasonable size (header + master + leaf + bookkeeping)
+        assert!(data.len() > 100);
+    }
+
+    // --- compile_excludes / is_excluded ---
+
+    #[test]
+    fn compile_excludes_strips_trailing_slash() {
+        let excl = compile_excludes(&["node_modules/".to_string()]);
+        assert_eq!(excl.len(), 1);
+        assert!(is_excluded(Path::new("project/node_modules/pkg"), &excl));
+    }
+
+    #[test]
+    fn is_excluded_matches_filename() {
+        let excl = compile_excludes(&[".DS_Store".to_string()]);
+        assert!(is_excluded(Path::new("dir/.DS_Store"), &excl));
+        assert!(!is_excluded(Path::new("dir/file.txt"), &excl));
+    }
+
+    // --- resolve_paths ---
+
+    #[test]
+    fn resolve_paths_finds_files() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.txt"), "a").unwrap();
+        fs::write(dir.path().join("b.txt"), "b").unwrap();
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], true, &[]);
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn resolve_paths_recursive_finds_nested() {
+        let dir = TempDir::new().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(dir.path().join("top.txt"), "t").unwrap();
+        fs::write(sub.join("deep.txt"), "d").unwrap();
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], true, &[]);
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn resolve_paths_nonrecursive() {
+        let dir = TempDir::new().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(dir.path().join("top.txt"), "t").unwrap();
+        fs::write(sub.join("deep.txt"), "d").unwrap();
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], false, &[]);
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn resolve_paths_excludes() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("keep.txt"), "k").unwrap();
+        fs::write(dir.path().join("skip.log"), "s").unwrap();
+        let excl = compile_excludes(&["*.log".to_string()]);
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], true, &excl);
+        assert_eq!(files.len(), 1);
+    }
+
+    // --- run_write / run_comment integration ---
+
+    #[test]
+    fn run_write_creates_ds_store() {
+        let dir = TempDir::new().unwrap();
+        let code = run_write(dir.path(), 128, "size", true, false, false);
+        assert_eq!(code, 0);
+        assert!(dir.path().join(".DS_Store").exists());
+    }
+
+    #[test]
+    fn run_write_dry_run_does_not_create_file() {
+        let dir = TempDir::new().unwrap();
+        let code = run_write(dir.path(), 128, "size", true, true, false);
+        assert_eq!(code, 0);
+        assert!(!dir.path().join(".DS_Store").exists());
+    }
+
+    #[test]
+    fn run_write_clean_removes_ds_store() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".DS_Store"), "dummy").unwrap();
+        let code = run_write(dir.path(), 128, "size", true, false, true);
+        assert_eq!(code, 0);
+        assert!(!dir.path().join(".DS_Store").exists());
+    }
+
+    #[test]
+    fn run_comment_dry_run() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("file.txt"), "content").unwrap();
+        let code = run_comment("test comment", &[dir.path().to_string_lossy().to_string()], true, &[], true);
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn run_comment_sets_xattr() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("file.txt");
+        fs::write(&file, "content").unwrap();
+        let code = run_comment("my comment", &[file.to_string_lossy().to_string()], false, &[], false);
+        assert_eq!(code, 0);
+        let data = xattr::get(&file, XATTR_COMMENT).unwrap().unwrap();
+        let val = plist::Value::from_reader(std::io::Cursor::new(&data)).unwrap();
+        assert_eq!(val.as_string(), Some("my comment"));
+    }
+}

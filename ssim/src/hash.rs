@@ -19,13 +19,14 @@ fn get_cached_phash(path: &Path) -> Option<ImageHash> {
         .duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
     if mtime > hashed_at { return None; }
     let hash_data = xattr::get(path, XATTR_PHASH).ok()??;
-    let encoded = String::from_utf8(hash_data).ok()?;
-    ImageHash::from_base64(&encoded).ok()
+    let hex_str = String::from_utf8(hash_data).ok()?;
+    let bytes = hex::decode(&hex_str).ok()?;
+    ImageHash::from_bytes(&bytes).ok()
 }
 
 fn set_phash_cache(path: &Path, hash: &ImageHash) {
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs().to_string();
-    let _ = xattr::set(path, XATTR_PHASH, hash.to_base64().as_bytes());
+    let _ = xattr::set(path, XATTR_PHASH, hex::encode(hash.as_bytes()).as_bytes());
     let _ = xattr::set(path, XATTR_PHASH_AT, now.as_bytes());
 }
 
@@ -125,4 +126,112 @@ pub fn candidate_pairs(entries: &[ImageEntry], threshold: u32) -> Vec<(usize, us
     }
 
     pairs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entry(path: &str, hash_bytes: &[u8]) -> ImageEntry {
+        ImageEntry {
+            path: PathBuf::from(path),
+            hash: ImageHash::from_bytes(hash_bytes).unwrap(),
+        }
+    }
+
+    // --- BK-tree ---
+
+    #[test]
+    fn bk_tree_empty() {
+        let entries: Vec<ImageEntry> = vec![];
+        let pairs = candidate_pairs(&entries, 10);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn bk_tree_single_entry() {
+        let entries = vec![make_entry("a.jpg", &[0u8; 8])];
+        let pairs = candidate_pairs(&entries, 10);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn bk_tree_identical_hashes_are_candidates() {
+        let entries = vec![
+            make_entry("a.jpg", &[0u8; 8]),
+            make_entry("b.jpg", &[0u8; 8]),
+        ];
+        let pairs = candidate_pairs(&entries, 0);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0], (0, 1));
+    }
+
+    #[test]
+    fn bk_tree_distant_hashes_not_candidates() {
+        let entries = vec![
+            make_entry("a.jpg", &[0x00; 8]),
+            make_entry("b.jpg", &[0xFF; 8]),
+        ];
+        let pairs = candidate_pairs(&entries, 5);
+        assert!(pairs.is_empty());
+    }
+
+    #[test]
+    fn bk_tree_respects_threshold() {
+        // Two hashes that differ by exactly 1 bit
+        let entries = vec![
+            make_entry("a.jpg", &[0b0000_0000, 0, 0, 0, 0, 0, 0, 0]),
+            make_entry("b.jpg", &[0b0000_0001, 0, 0, 0, 0, 0, 0, 0]),
+        ];
+        // threshold=0 should not match
+        assert!(candidate_pairs(&entries, 0).is_empty());
+        // threshold=1 should match
+        assert_eq!(candidate_pairs(&entries, 1).len(), 1);
+    }
+
+    #[test]
+    fn bk_tree_multiple_groups() {
+        let entries = vec![
+            make_entry("a.jpg", &[0x00; 8]),
+            make_entry("b.jpg", &[0x00; 8]),
+            make_entry("c.jpg", &[0xFF; 8]),
+            make_entry("d.jpg", &[0xFF; 8]),
+        ];
+        let pairs = candidate_pairs(&entries, 0);
+        assert_eq!(pairs.len(), 2); // (0,1) and (2,3)
+    }
+
+    // --- load_and_hash with real temp image ---
+
+    #[test]
+    fn load_and_hash_small_image() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("test.png");
+        // Create a small valid PNG
+        let img = image::RgbaImage::from_fn(16, 16, |x, y| {
+            image::Rgba([(x * 16) as u8, (y * 16) as u8, 128, 255])
+        });
+        img.save(&path).unwrap();
+
+        let entry = load_and_hash(&path).unwrap();
+        assert_eq!(entry.path, path);
+        assert!(!entry.hash.as_bytes().is_empty());
+    }
+
+    #[test]
+    fn load_and_hash_caches_phash() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("cached.png");
+        let img = image::RgbaImage::from_fn(16, 16, |_, _| image::Rgba([100, 100, 100, 255]));
+        img.save(&path).unwrap();
+
+        let entry1 = load_and_hash(&path).unwrap();
+        // Second call should use cache
+        let entry2 = load_and_hash(&path).unwrap();
+        assert_eq!(entry1.hash.as_bytes(), entry2.hash.as_bytes());
+
+        // Verify xattr was set
+        let phash_data = xattr::get(&path, XATTR_PHASH).unwrap();
+        assert!(phash_data.is_some());
+    }
 }

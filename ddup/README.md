@@ -1,6 +1,6 @@
 # ddup
 
-A macOS CLI tool that hashes files and stores the hash as a Finder tag. Also detects and deletes duplicate files.
+A macOS CLI tool that finds duplicate files using content hashing or perceptual image similarity (SSIM). Stores hashes as Finder tags and can delete duplicates.
 
 ## Install
 
@@ -20,54 +20,48 @@ ddup [OPTIONS] <PATHS>...
 
 Accepts file paths, directories (recursive by default), and glob patterns.
 
-### Hash and tag files
+### Find and delete duplicates
+
+By default, ddup finds duplicates using perceptual similarity for images (SSIM) and exact hashing for other files, then prompts to delete them:
 
 ```sh
-# Hash all files in a directory (sets Finder tags)
+# Find and manage duplicates (interactive)
 ddup /path/to/files
+
+# Auto-select which to keep, confirm at the end
+ddup --keep=best /path/to/files
+
+# Skip confirmation — move to Trash
+ddup --keep=newest --yes /path/to/files
+
+# Skip confirmation — permanently delete
+ddup --keep=oldest --hard /path/to/files
+
+# Dry run — show duplicates without deleting or tagging
+ddup -n /path/to/files
+```
+
+### Hash-only mode (no SSIM)
+
+```sh
+# Use exact hash matching only
+ddup --ssim=false /path/to/files
 
 # Use a specific algorithm
 ddup -a blake3 /path/to/files
-
-# Dry run — print hashes without setting attributes
-ddup -n /path/to/files
-
-# Verbose — print hash and path for each file
-ddup -v /path/to/files
 ```
 
-Each file gets two Finder tags: `hash:<value>` and `hashed:<timestamp>`.
+Each file gets Finder tags: `hash:<value>`, `hashed:<timestamp>`, and `phash:<value>` (for images).
 
-### Find duplicates
-
-```sh
-# List duplicate files
-ddup -d /path/to/files
-
-# Output:
-# 9bbb93806422ef35
-#   54 KB /path/to/files/a.webp
-#   54 KB /path/to/files/b.webp
-```
-
-### Delete duplicates
-
-Deleted files are moved to macOS Trash (reversible).
-
-```sh
-# Interactive — choose which file to keep per group
-ddup -d --delete /path/to/files
-
-# Auto-select with a strategy, confirm once at the end
-ddup -d --delete --keep=newest /path/to/files
-```
-
-**Keep strategies:**
+### Keep strategies
 
 | Strategy | Keeps |
 |---|---|
+| `best` (default) | Highest resolution, then best format (webp > png > tiff > jpg > gif > bmp) |
 | `newest` | Most recently modified file |
 | `oldest` | Earliest modified file |
+| `largest` | Largest file by size |
+| `smallest` | Smallest file by size |
 | `shallowest` | File with fewest path components |
 | `deepest` | File with most path components |
 | `first` | First file alphabetically |
@@ -103,7 +97,6 @@ Simple `key=value` format, `#` for comments. Keys match CLI flag names:
 ```
 # example config
 algorithm=blake3
-verbose=true
 exclude=node_modules
 exclude=.git
 ```
@@ -126,21 +119,25 @@ macOS only. Uses `osascript` for Trash and `xattr` for Finder tags and hash cach
 ## Testing
 
 ```sh
-cargo test              # 21 unit tests
-./tests/integration.sh  # 24 integration tests
+cargo test              # unit tests
+./tests/integration.sh  # integration tests
 ```
 
 ## Options
 
 ```
-  -a, --algorithm <ALGORITHM>  Hash algorithm [default: xxh3]
-  -r, --recursive              Recurse into directories [default: true]
-  -n, --dry-run                Print hashes without setting attributes
-  -v, --verbose                Print hash and path for each file
-  -d, --duplicates             Find and print duplicate files
-      --delete                 Delete duplicates (move to Trash, requires -d)
-  -k, --keep <KEEP>            Strategy for which file to keep when deleting
-      --no-cache               Force re-hash, ignoring cached values
-  -e, --exclude <PATTERN>      Exclude files/dirs matching pattern (repeatable)
-  -h, --help                   Print help
+  -a, --algorithm <ALGORITHM>            Hash algorithm [default: xxh3]
+  -r, --recursive                        Recurse into directories [default: true]
+  -n, --dry-run                          Print hashes without setting attributes
+  -v, --verbose                          Print hash and path for each file
+      --delete                           Delete duplicates [default: true]
+  -k, --keep <KEEP>                      Strategy for which file to keep [default: best]
+      --yes                              Skip confirmation, move to Trash
+      --hard                             Skip confirmation, permanently delete
+      --no-cache                         Force re-hash, ignoring cached values
+      --ssim                             Use perceptual similarity for images [default: true]
+      --threshold <THRESHOLD>            SSIM threshold for similarity, 0.0-1.0 [default: 0.95]
+      --hash-threshold <HASH_THRESHOLD>  Max Hamming distance for hash pre-filter [default: 10]
+  -e, --exclude <PATTERN>                Exclude files/dirs matching pattern (repeatable)
+  -h, --help                             Print help
 ```

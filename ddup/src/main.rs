@@ -20,15 +20,15 @@ struct Cli {
     dry_run: bool,
     #[arg(short, long)]
     verbose: bool,
-    #[arg(long)]
+    #[arg(long, default_value_t = true)]
     delete: bool,
     #[arg(short, long, value_enum, default_value = "best")]
     keep: Option<KeepStrategy>,
     /// Skip confirmation, move to Trash
-    #[arg(long, requires = "delete", conflicts_with = "hard")]
+    #[arg(long, conflicts_with = "hard")]
     yes: bool,
     /// Skip confirmation, permanently delete
-    #[arg(long, requires = "delete", conflicts_with = "yes")]
+    #[arg(long, conflicts_with = "yes")]
     hard: bool,
     #[arg(long)]
     no_cache: bool,

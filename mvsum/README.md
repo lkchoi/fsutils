@@ -12,20 +12,20 @@ mvsum [OPTIONS] <PATHS>...
 
 | Flag | Description |
 |------|-------------|
-| `-a, --algorithm <ALGORITHM>` | Hash algorithm: `md5` (default), `sha1`, `xxh3`, `blake3` |
+| `-a, --algorithm <ALGORITHM>` | Hash algorithm: `xxh3` (default), `md5`, `sha1`, `blake3` |
 | `-v, --verbose` | Print renames as they happen |
 
 ## Examples
 
 ```sh
-# Rename using default MD5
+# Rename using default XXH3
 mvsum photo.jpg
-# photo.jpg -> d41d8cd98f00b204e9800998ecf8427e.jpg
+# photo.jpg -> a1b2c3d4e5f67890.jpg
 
 # Rename with SHA-1
 mvsum -a sha1 *.png
 
-# Preview renames
+# Verbose output
 mvsum -v -a blake3 /path/to/files/*.pdf
 ```
 

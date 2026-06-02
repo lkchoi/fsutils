@@ -25,8 +25,8 @@ This builds all tools in release mode and symlinks the binaries into `~/bin`.
 Each tool can be invoked standalone:
 
 ```sh
-mvsum -a sha1 *.jpg
-ddup -d /path/to/files
+mvsum *.jpg
+ddup /path/to/files
 dss comment "archived" /path/to/folder/
 ssim /path/to/images
 fix-ext *.png
@@ -35,8 +35,8 @@ fix-ext *.png
 Or via the combined binary:
 
 ```sh
-fsutils mvsum -a sha1 *.jpg
-fsutils ddup -d /path/to/files
+fsutils mvsum *.jpg
+fsutils ddup /path/to/files
 fsutils dss comment "archived" /path/to/folder/
 fsutils ssim /path/to/images
 fsutils fix-ext *.png

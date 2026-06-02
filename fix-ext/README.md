@@ -53,5 +53,7 @@ fix-ext -v misnamed_file.png another_file.dat
 ## Notes
 
 - Files already having the correct extension are skipped
-- Unknown MIME types are reported to stderr and skipped
+- For unknown MIME types, the extension is normalized (lowercased, `jpeg` → `jpg`)
+- Files without an extension are skipped
+- On case-insensitive filesystems (macOS), renames through a temp file to force case changes
 - Relies on the macOS/Linux `file` command for MIME detection

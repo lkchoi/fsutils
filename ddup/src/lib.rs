@@ -304,6 +304,276 @@ pub fn hard_delete(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    // --- format_size ---
+
+    #[test]
+    fn format_size_bytes() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_size_kb_mb_gb() {
+        assert_eq!(format_size(1024), "1 KB");
+        assert_eq!(format_size(1024 * 1024), "1 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1 GB");
+    }
+
+    // --- path_depth ---
+
+    #[test]
+    fn path_depth_simple() {
+        assert_eq!(path_depth(Path::new("a.txt")), 1);
+        assert_eq!(path_depth(Path::new("a/b/c.txt")), 3);
+        assert_eq!(path_depth(Path::new("/a/b/c.txt")), 4); // RootDir + 3
+    }
+
+    // --- format_rank ---
+
+    #[test]
+    fn format_rank_ordering() {
+        assert!(format_rank(Path::new("a.webp")) > format_rank(Path::new("a.png")));
+        assert!(format_rank(Path::new("a.png")) > format_rank(Path::new("a.jpg")));
+        assert!(format_rank(Path::new("a.jpg")) > format_rank(Path::new("a.gif")));
+        assert_eq!(format_rank(Path::new("a.txt")), 0);
+    }
+
+    // --- is_excluded / compile_excludes ---
+
+    #[test]
+    fn compile_excludes_valid_and_invalid() {
+        let patterns = vec!["*.txt".to_string(), "[invalid".to_string()];
+        let compiled = compile_excludes(&patterns);
+        assert_eq!(compiled.len(), 1);
+    }
+
+    #[test]
+    fn is_excluded_by_filename() {
+        let excl = compile_excludes(&["*.log".to_string()]);
+        assert!(is_excluded(Path::new("dir/test.log"), &excl));
+        assert!(!is_excluded(Path::new("dir/test.txt"), &excl));
+    }
+
+    #[test]
+    fn is_excluded_by_component() {
+        let excl = compile_excludes(&[".git".to_string()]);
+        assert!(is_excluded(Path::new("repo/.git/config"), &excl));
+    }
+
+    // --- is_image_file ---
+
+    #[test]
+    fn is_image_file_recognizes_extensions() {
+        assert!(is_image_file(Path::new("photo.jpg")));
+        assert!(is_image_file(Path::new("photo.PNG")));
+        assert!(is_image_file(Path::new("photo.webp")));
+        assert!(!is_image_file(Path::new("doc.pdf")));
+        assert!(!is_image_file(Path::new("noext")));
+    }
+
+    // --- hash_file ---
+
+    fn make_temp_file(content: &[u8]) -> (TempDir, PathBuf) {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.bin");
+        fs::write(&path, content).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn hash_file_xxh3_deterministic() {
+        let (_dir, path) = make_temp_file(b"hello world");
+        let h1 = hash_file(&path, &HashAlgorithm::Xxh3).unwrap();
+        let h2 = hash_file(&path, &HashAlgorithm::Xxh3).unwrap();
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 16); // 64-bit hex
+    }
+
+    #[test]
+    fn hash_file_md5() {
+        let (_dir, path) = make_temp_file(b"hello world");
+        let h = hash_file(&path, &HashAlgorithm::Md5).unwrap();
+        assert_eq!(h, "5eb63bbbe01eeed093cb22bb8f5acdc3");
+    }
+
+    #[test]
+    fn hash_file_sha256() {
+        let (_dir, path) = make_temp_file(b"hello world");
+        let h = hash_file(&path, &HashAlgorithm::Sha256).unwrap();
+        assert!(h.starts_with("b94d27b9"));
+    }
+
+    #[test]
+    fn hash_file_blake3() {
+        let (_dir, path) = make_temp_file(b"hello world");
+        let h = hash_file(&path, &HashAlgorithm::Blake3).unwrap();
+        assert!(!h.is_empty());
+    }
+
+    #[test]
+    fn hash_file_different_content_different_hash() {
+        let (_dir1, path1) = make_temp_file(b"aaa");
+        let (_dir2, path2) = make_temp_file(b"bbb");
+        let h1 = hash_file(&path1, &HashAlgorithm::Xxh3).unwrap();
+        let h2 = hash_file(&path2, &HashAlgorithm::Xxh3).unwrap();
+        assert_ne!(h1, h2);
+    }
+
+    // --- hash caching via xattr ---
+
+    #[test]
+    fn hash_file_cached_stores_and_retrieves() {
+        let (_dir, path) = make_temp_file(b"cached test");
+        let h1 = hash_file_cached(&path, &HashAlgorithm::Xxh3, false).unwrap();
+        // Second call should hit cache
+        let h2 = hash_file_cached(&path, &HashAlgorithm::Xxh3, false).unwrap();
+        assert_eq!(h1, h2);
+        // Verify cache was actually set
+        assert!(get_cached_hash(&path, &HashAlgorithm::Xxh3).is_some());
+    }
+
+    #[test]
+    fn hash_file_cached_no_cache_flag_skips_cache() {
+        let (_dir, path) = make_temp_file(b"no cache test");
+        let h1 = hash_file_cached(&path, &HashAlgorithm::Xxh3, true).unwrap();
+        let h2 = hash_file_cached(&path, &HashAlgorithm::Xxh3, true).unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn cached_hash_wrong_algorithm_returns_none() {
+        let (_dir, path) = make_temp_file(b"algo test");
+        hash_file_cached(&path, &HashAlgorithm::Xxh3, false).unwrap();
+        assert!(get_cached_hash(&path, &HashAlgorithm::Md5).is_none());
+    }
+
+    // --- resolve_paths ---
+
+    #[test]
+    fn resolve_paths_finds_files_in_dir() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.txt"), "a").unwrap();
+        fs::write(dir.path().join("b.txt"), "b").unwrap();
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], true, &[]);
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn resolve_paths_excludes_patterns() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("keep.txt"), "k").unwrap();
+        fs::write(dir.path().join("skip.log"), "s").unwrap();
+        let excl = compile_excludes(&["*.log".to_string()]);
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], true, &excl);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].to_string_lossy().contains("keep.txt"));
+    }
+
+    #[test]
+    fn resolve_paths_single_file() {
+        let (_dir, path) = make_temp_file(b"single");
+        let files = resolve_paths(&[path.to_string_lossy().to_string()], false, &[]);
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn resolve_paths_nonrecursive_skips_subdirs() {
+        let dir = TempDir::new().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(dir.path().join("top.txt"), "t").unwrap();
+        fs::write(sub.join("deep.txt"), "d").unwrap();
+        let files = resolve_paths(&[dir.path().to_string_lossy().to_string()], false, &[]);
+        assert_eq!(files.len(), 1);
+    }
+
+    // --- select_keep_index ---
+
+    #[test]
+    fn select_keep_largest_smallest() {
+        let dir = TempDir::new().unwrap();
+        let small = dir.path().join("small.txt");
+        let big = dir.path().join("big.txt");
+        fs::write(&small, "x").unwrap();
+        fs::write(&big, "xxxxx").unwrap();
+        let paths = vec![small.clone(), big.clone()];
+
+        assert_eq!(select_keep_index(&paths, &KeepStrategy::Largest), 1);
+        assert_eq!(select_keep_index(&paths, &KeepStrategy::Smallest), 0);
+    }
+
+    #[test]
+    fn select_keep_shallowest_deepest() {
+        let paths = vec![
+            PathBuf::from("a/b/c/file.txt"),
+            PathBuf::from("a/file.txt"),
+        ];
+        assert_eq!(select_keep_index(&paths, &KeepStrategy::Shallowest), 1);
+        assert_eq!(select_keep_index(&paths, &KeepStrategy::Deepest), 0);
+    }
+
+    #[test]
+    fn select_keep_first_is_alphabetical() {
+        let paths = vec![
+            PathBuf::from("z.txt"),
+            PathBuf::from("a.txt"),
+        ];
+        assert_eq!(select_keep_index(&paths, &KeepStrategy::First), 1);
+    }
+
+    // --- hard_delete ---
+
+    #[test]
+    fn hard_delete_removes_file() {
+        let (_dir, path) = make_temp_file(b"delete me");
+        assert!(path.exists());
+        hard_delete(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    // --- apply_config ---
+
+    #[test]
+    fn apply_config_does_not_override_existing_flags() {
+        // apply_config reads from config files which may not exist in test env,
+        // but we can at least verify it doesn't panic with empty config
+        let mut args = vec!["ddup".to_string(), ".".to_string()];
+        apply_config(&mut args);
+        assert!(args.contains(&"ddup".to_string()));
+    }
+
+    // --- HashAlgorithm Display ---
+
+    #[test]
+    fn hash_algorithm_display() {
+        assert_eq!(HashAlgorithm::Xxh3.to_string(), "xxh3");
+        assert_eq!(HashAlgorithm::Md5.to_string(), "md5");
+        assert_eq!(HashAlgorithm::Sha256.to_string(), "sha256");
+        assert_eq!(HashAlgorithm::Blake3.to_string(), "blake3");
+    }
+
+    // --- Finder tag ---
+
+    #[test]
+    fn set_finder_tag_writes_xattr() {
+        let (_dir, path) = make_temp_file(b"tag test");
+        set_finder_tag(&path, "abc123").unwrap();
+        let data = xattr::get(&path, "com.apple.metadata:_kMDItemUserTags").unwrap().unwrap();
+        // Should be valid binary plist containing hash:abc123
+        let val = plist::Value::from_reader(io::Cursor::new(&data)).unwrap();
+        let arr = val.as_array().unwrap();
+        let tags: Vec<String> = arr.iter().filter_map(|v| v.as_string().map(|s| s.to_string())).collect();
+        assert!(tags.iter().any(|t| t == "hash:abc123"));
+        assert!(tags.iter().any(|t| t.starts_with("hashed:")));
+    }
+}
+
 // --- Path resolution ---
 
 pub fn is_excluded(path: &Path, exclude: &[glob::Pattern]) -> bool {
