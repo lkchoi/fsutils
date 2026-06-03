@@ -4,7 +4,7 @@
 
 Cargo workspace of macOS file utility CLI tools. Each tool is its own crate with `lib.rs` (logic) and `main.rs` (CLI). The `fsutils` crate re-exports all tools as subcommands.
 
-Crates: mvsum, ddup, dss, ssim, fix-ext, towebp, fsutils.
+Crates: mvsum, ddup, dss, ssim, fix-ext, fsutils.
 
 ## Conventions
 

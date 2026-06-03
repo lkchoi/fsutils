@@ -10,4 +10,3 @@ dss = { path = "../dss" }
 ddup = { path = "../ddup" }
 ssim = { path = "../ssim" }
 fix-ext = { path = "../fix-ext" }
-towebp = { path = "../towebp" }

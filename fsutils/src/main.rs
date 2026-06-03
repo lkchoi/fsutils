@@ -91,20 +91,6 @@ enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
-    /// Convert images to WebP, preserving file attributes
-    Towebp {
-        #[arg(required = true)]
-        paths: Vec<String>,
-        #[arg(short = 'n', long)]
-        dry_run: bool,
-        #[arg(short, long)]
-        verbose: bool,
-        #[arg(short, long, default_value_t = 80)]
-        quality: u8,
-        /// Keep original file after conversion
-        #[arg(short, long)]
-        keep: bool,
-    },
 }
 
 #[derive(Subcommand)]
@@ -270,8 +256,6 @@ fn main() {
         }
         Command::FixExt { paths, dry_run, verbose } =>
             fix_ext::run(&paths, dry_run, verbose),
-        Command::Towebp { paths, dry_run, verbose, quality, keep } =>
-            towebp::run(&paths, quality, dry_run, verbose, keep),
     };
     if code != 0 { std::process::exit(1); }
 }
