@@ -9,6 +9,7 @@ fn mime_to_ext(mime: &str) -> Option<&'static str> {
         "image/webp" => Some("webp"),
         "image/avif" => Some("avif"),
         "image/heic" => Some("heic"),
+        "image/bmp" | "image/x-ms-bmp" => Some("bmp"),
         "image/tiff" => Some("tiff"),
         "video/mp4" => Some("mp4"),
         "video/quicktime" => Some("mov"),
