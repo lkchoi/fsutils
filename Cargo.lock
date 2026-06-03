@@ -1619,6 +1619,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "towebp"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "tempfile",
+ "xattr",
+]
+
+[[package]]
 name = "transpose"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

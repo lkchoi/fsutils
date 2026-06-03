@@ -7,7 +7,7 @@ mkdir -p "$BIN_DIR"
 
 cargo build --release --manifest-path "$REPO/Cargo.toml"
 
-for tool in fsutils mvsum ddup dss ssim fix-ext; do
+for tool in fsutils mvsum ddup dss ssim fix-ext towebp; do
     src="$REPO/target/release/$tool"
     dst="$BIN_DIR/$tool"
     ln -sf "$src" "$dst"
