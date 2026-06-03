@@ -613,6 +613,7 @@ dependencies = [
  "fix-ext",
  "mvsum",
  "ssim",
+ "towebp",
 ]
 
 [[package]]
