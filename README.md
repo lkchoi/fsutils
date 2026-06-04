@@ -11,6 +11,7 @@ A collection of macOS file utility CLI tools, written in Rust. Each tool is avai
 | [dss](dss/) | Write .DS_Store preferences and set Finder comments |
 | [ssim](ssim/) | Find near-duplicate images using perceptual hashing and SSIM |
 | [fix-ext](fix-ext/) | Fix file extensions based on detected MIME type |
+| [hash-bucket](hash-bucket/) | Sort hash-named files into prefix directories |
 
 ## Installation
 

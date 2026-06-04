@@ -496,6 +496,7 @@ dependencies = [
  "clap",
  "glob",
  "plist",
+ "rayon",
  "tempfile",
  "walkdir",
  "xattr",
@@ -611,6 +612,7 @@ dependencies = [
  "ddup",
  "dss",
  "fix-ext",
+ "hash-bucket",
  "mvsum",
  "ssim",
 ]
@@ -697,6 +699,16 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "zerocopy",
+]
+
+[[package]]
+name = "hash-bucket"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dss",
+ "rayon",
+ "tempfile",
 ]
 
 [[package]]

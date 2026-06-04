@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 const XATTR_COMMENT: &str = "com.apple.metadata:kMDItemFinderComment";
+const XATTR_TAGS: &str = "com.apple.metadata:_kMDItemUserTags";
 
 pub fn set_finder_comment(path: &Path, comment: &str) -> std::io::Result<()> {
     let plist_val = Value::String(comment.to_string());
@@ -12,6 +13,116 @@ pub fn set_finder_comment(path: &Path, comment: &str) -> std::io::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     xattr::set(path, XATTR_COMMENT, &buf)?;
     Ok(())
+}
+
+fn set_finder_tags(path: &Path, tags: &[String]) -> std::io::Result<()> {
+    let arr: Vec<Value> = tags.iter().map(|t| Value::String(t.clone())).collect();
+    let plist_val = Value::Array(arr);
+    let mut buf = Vec::new();
+    plist_val.to_writer_binary(&mut buf)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    xattr::set(path, XATTR_TAGS, &buf)?;
+    Ok(())
+}
+
+fn get_finder_tags(path: &Path) -> Option<Vec<String>> {
+    let data = xattr::get(path, XATTR_TAGS).ok()??;
+    let val = Value::from_reader(std::io::Cursor::new(&data)).ok()?;
+    let arr = val.into_array()?;
+    Some(arr.into_iter().filter_map(|v| v.into_string()).collect())
+}
+
+fn get_tag_value(tags: &[String], prefix: &str) -> Option<String> {
+    tags.iter()
+        .find(|t| t.starts_with(prefix))
+        .map(|t| t[prefix.len()..].to_string())
+}
+
+fn dir_mtime(path: &Path) -> std::io::Result<u64> {
+    use std::time::UNIX_EPOCH;
+    let meta = fs::metadata(path)?;
+    Ok(meta.modified()?.duration_since(UNIX_EPOCH).unwrap().as_secs())
+}
+
+fn count_files_in_dir(dir: &Path) -> std::io::Result<usize> {
+    let mut count = 0;
+    for entry in fs::read_dir(dir)? {
+        if let Ok(e) = entry {
+            if e.file_type().map_or(false, |ft| ft.is_file())
+                && !e.file_name().to_string_lossy().starts_with('.') {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
+pub fn run_dir_count(paths: &[PathBuf], dry_run: bool) -> i32 {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    let errors = AtomicI32::new(0);
+
+    // Single-pass collection: walk each path, collect all dirs (including roots)
+    let mut dirs = Vec::new();
+    for path in paths {
+        if !path.is_dir() {
+            eprintln!("error: {}: not a directory", path.display());
+            errors.fetch_add(1, Ordering::Relaxed);
+            continue;
+        }
+        for entry in WalkDir::new(path)
+            .into_iter()
+            .filter_entry(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_dir() {
+                dirs.push(entry.into_path());
+            }
+        }
+    }
+
+    dirs.par_iter().for_each(|dir| {
+        let mtime = match dir_mtime(dir) {
+            Ok(t) => t,
+            Err(e) => { eprintln!("error: {}: {e}", dir.display()); errors.fetch_add(1, Ordering::Relaxed); return; }
+        };
+
+        if let Some(tags) = get_finder_tags(dir) {
+            if let Some(prev) = get_tag_value(&tags, "counted:") {
+                if prev == mtime.to_string() {
+                    if let Some(count) = get_tag_value(&tags, "files:") {
+                        println!("{count}\t{}", dir.display());
+                    }
+                    return;
+                }
+            }
+        }
+
+        let count = match count_files_in_dir(dir) {
+            Ok(c) => c,
+            Err(e) => { eprintln!("error: {}: {e}", dir.display()); errors.fetch_add(1, Ordering::Relaxed); return; }
+        };
+
+        if dry_run {
+            println!("{count}\t{}", dir.display());
+            return;
+        }
+
+        if let Err(e) = set_finder_comment(dir, &format!("{count} files")) {
+            eprintln!("error: {}: {e}", dir.display()); errors.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Err(e) = set_finder_tags(dir, &[
+            format!("files:{count}"),
+            format!("counted:{mtime}"),
+        ]) {
+            eprintln!("error: {}: {e}", dir.display()); errors.fetch_add(1, Ordering::Relaxed);
+        }
+
+        println!("{count}\t{}", dir.display());
+    });
+
+    errors.load(Ordering::Relaxed)
 }
 
 pub fn is_excluded(path: &Path, exclude: &[glob::Pattern]) -> bool {

@@ -91,6 +91,23 @@ enum Command {
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Sort hash-named files into prefix directories
+    HashBucket {
+        /// Source directory containing files
+        #[arg(default_value = ".")]
+        src: PathBuf,
+        /// Move files instead of copying
+        #[arg(long)]
+        mv: bool,
+        /// Create bucket directories under this path instead of in-place
+        #[arg(long)]
+        target: Option<PathBuf>,
+        /// Prefix length for bucket names
+        #[arg(long, default_value = "2")]
+        length: usize,
+        #[arg(short = 'n', long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -108,6 +125,12 @@ enum DssCommand {
         dry_run: bool,
         #[arg(long)]
         clean: bool,
+    },
+    DirCount {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        #[arg(short = 'n', long)]
+        dry_run: bool,
     },
     Comment {
         comment: String,
@@ -234,6 +257,8 @@ fn main() {
         Command::Dss { command } => match command {
             DssCommand::Write { path, icon_size, arrange_by, show_preview, dry_run, clean } =>
                 dss::run_write(&path, icon_size, &arrange_by, show_preview, dry_run, clean),
+            DssCommand::DirCount { paths, dry_run } =>
+                dss::run_dir_count(&paths, dry_run),
             DssCommand::Comment { comment, paths, recursive, exclude, dry_run } =>
                 dss::run_comment(&comment, &paths, recursive, &exclude, dry_run),
         },
@@ -256,6 +281,15 @@ fn main() {
         }
         Command::FixExt { paths, dry_run, verbose } =>
             fix_ext::run(&paths, dry_run, verbose),
+        Command::HashBucket { src, mv, target, length, dry_run } => {
+            if length < 1 { eprintln!("error: --length must be >= 1"); std::process::exit(1); }
+            let src = src.canonicalize().unwrap_or_else(|e| { eprintln!("error: {}: {e}", src.display()); std::process::exit(1); });
+            let target = match target {
+                Some(t) => { std::fs::create_dir_all(&t).ok(); t.canonicalize().unwrap_or_else(|e| { eprintln!("error: {}: {e}", t.display()); std::process::exit(1); }) }
+                None => src.clone(),
+            };
+            hash_bucket::run(&src, &target, length, !mv, dry_run)
+        }
     };
     if code != 0 { std::process::exit(1); }
 }
