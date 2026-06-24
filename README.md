@@ -29,8 +29,11 @@ Each tool can be invoked standalone:
 mvsum *.jpg
 ddup /path/to/files
 dss comment "archived" /path/to/folder/
-ssim /path/to/images
+dss dir-count /path/to/folders/
+ssim photo.jpg /path/to/images
+ssim dupes /path/to/images
 fix-ext *.png
+hash-bucket /path/to/files
 ```
 
 Or via the combined binary:
@@ -39,8 +42,11 @@ Or via the combined binary:
 fsutils mvsum *.jpg
 fsutils ddup /path/to/files
 fsutils dss comment "archived" /path/to/folder/
-fsutils ssim /path/to/images
+fsutils dss dir-count /path/to/folders/
+fsutils ssim photo.jpg /path/to/images
+fsutils ssim dupes /path/to/images
 fsutils fix-ext *.png
+fsutils hash-bucket /path/to/files
 ```
 
 ## Structure
@@ -48,13 +54,14 @@ fsutils fix-ext *.png
 This is a Cargo workspace. Each tool is its own crate with a `lib.rs` (logic) and `main.rs` (CLI wrapper). The `fsutils` crate depends on all others and exposes them as subcommands.
 
 ```
-rust/
+fsutils/
 ├── Cargo.toml       # workspace
 ├── mvsum/
 ├── ddup/
 ├── dss/
 ├── ssim/
 ├── fix-ext/
+├── hash-bucket/
 ├── fsutils/
 └── install.sh
 ```
