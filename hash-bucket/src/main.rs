@@ -8,9 +8,9 @@ struct Cli {
     #[arg(default_value = ".")]
     src: PathBuf,
 
-    /// Move files instead of copying
+    /// Copy files instead of moving
     #[arg(long)]
-    mv: bool,
+    cp: bool,
 
     /// Create bucket directories under this path instead of in-place
     #[arg(long)]
@@ -49,7 +49,7 @@ fn main() {
         None => src.clone(),
     };
 
-    let code = hash_bucket::run(&src, &target, cli.length, !cli.mv, cli.dry_run);
+    let code = hash_bucket::run(&src, &target, cli.length, cli.cp, cli.dry_run);
     if code != 0 {
         std::process::exit(1);
     }

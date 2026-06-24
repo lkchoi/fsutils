@@ -1,3 +1,4 @@
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,15 @@ pub fn run(src: &Path, target: &Path, length: usize, copy: bool, dry_run: bool) 
         return 0;
     }
 
-    eprintln!("{} files to {}", files.len(), if copy { "copy" } else { "move" });
+    let action = if copy { "copy" } else { "move" };
+    let pb = ProgressBar::new(files.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{msg} [{bar:40}] {pos}/{len}")
+            .unwrap()
+            .progress_chars("=> "),
+    );
+    pb.set_message(action.to_string());
 
     files.par_iter().for_each(|file| {
         let name = file.file_name().unwrap().to_string_lossy();
@@ -38,12 +47,14 @@ pub fn run(src: &Path, target: &Path, length: usize, copy: bool, dry_run: bool) 
 
         if dry_run {
             println!("{} -> {}/{}", file.display(), dest_dir.display(), name);
+            pb.inc(1);
             return;
         }
 
         if let Err(e) = fs::create_dir_all(&dest_dir) {
             eprintln!("error: mkdir {}: {e}", dest_dir.display());
             errors.fetch_add(1, Ordering::Relaxed);
+            pb.inc(1);
             return;
         }
 
@@ -58,7 +69,10 @@ pub fn run(src: &Path, target: &Path, length: usize, copy: bool, dry_run: bool) 
             eprintln!("error: {} -> {}: {e}", file.display(), dest.display());
             errors.fetch_add(1, Ordering::Relaxed);
         }
+        pb.inc(1);
     });
+
+    pb.finish_and_clear();
 
     let errs = errors.load(Ordering::Relaxed);
 

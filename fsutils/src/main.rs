@@ -62,25 +62,8 @@ enum Command {
     },
     /// Find near-duplicate images using perceptual hashing and SSIM
     Ssim {
-        /// Files, directories, or glob patterns
-        #[arg(required = true)]
-        paths: Vec<String>,
-        #[arg(long, default_value = "0.95")]
-        threshold: f64,
-        #[arg(long, default_value = "10")]
-        hash_threshold: u32,
-    },
-    /// Find images similar to a reference image
-    Similar {
-        /// Reference image to compare against
-        image: String,
-        /// Directories to search (default: current directory)
-        #[arg(default_value = ".")]
-        dirs: Vec<String>,
-        #[arg(long, default_value = "0.80")]
-        threshold: f64,
-        #[arg(long, default_value = "10")]
-        hash_threshold: u32,
+        #[command(subcommand)]
+        command: SsimCommand,
     },
     /// Fix file extensions based on MIME type
     FixExt {
@@ -96,9 +79,9 @@ enum Command {
         /// Source directory containing files
         #[arg(default_value = ".")]
         src: PathBuf,
-        /// Move files instead of copying
+        /// Copy files instead of moving
         #[arg(long)]
-        mv: bool,
+        cp: bool,
         /// Create bucket directories under this path instead of in-place
         #[arg(long)]
         target: Option<PathBuf>,
@@ -107,6 +90,32 @@ enum Command {
         length: usize,
         #[arg(short = 'n', long)]
         dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SsimCommand {
+    /// Find duplicate groups among images
+    Dupes {
+        /// Files, directories, or glob patterns
+        #[arg(required = true)]
+        paths: Vec<String>,
+        #[arg(long, default_value = "0.95")]
+        threshold: f64,
+        #[arg(long, default_value = "10")]
+        hash_threshold: u32,
+    },
+    /// Find images similar to a reference image (reverse image search)
+    Search {
+        /// Reference image to search for
+        image: String,
+        /// Directories to search
+        #[arg(default_value = ".")]
+        dirs: Vec<String>,
+        #[arg(long, default_value = "0.80")]
+        threshold: f64,
+        #[arg(long, default_value = "10")]
+        hash_threshold: u32,
     },
 }
 
@@ -262,33 +271,35 @@ fn main() {
             DssCommand::Comment { comment, paths, recursive, exclude, dry_run } =>
                 dss::run_comment(&comment, &paths, recursive, &exclude, dry_run),
         },
-        Command::Ssim { paths, threshold, hash_threshold } =>
-            ssim::run(&paths, threshold, hash_threshold),
-        Command::Similar { image, dirs, threshold, hash_threshold } => {
-            match ssim::find_similar(&image, &dirs, threshold, hash_threshold) {
-                Ok(matches) => {
-                    if matches.is_empty() {
-                        eprintln!("No similar images found.");
-                    } else {
-                        for m in &matches {
-                            println!("{:.4} {}", m.score, m.path.display());
+        Command::Ssim { command } => match command {
+            SsimCommand::Dupes { paths, threshold, hash_threshold } =>
+                ssim::run(&paths, threshold, hash_threshold),
+            SsimCommand::Search { image, dirs, threshold, hash_threshold } => {
+                match ssim::find_similar(&image, &dirs, threshold, hash_threshold) {
+                    Ok(matches) => {
+                        if matches.is_empty() {
+                            eprintln!("No similar images found.");
+                        } else {
+                            for m in &matches {
+                                println!("{:.4} {}", m.score, m.path.display());
+                            }
                         }
+                        0
                     }
-                    0
+                    Err(e) => { eprintln!("Error: {}", e); 1 }
                 }
-                Err(e) => { eprintln!("Error: {}", e); 1 }
             }
         }
         Command::FixExt { paths, dry_run, verbose } =>
             fix_ext::run(&paths, dry_run, verbose),
-        Command::HashBucket { src, mv, target, length, dry_run } => {
+        Command::HashBucket { src, cp, target, length, dry_run } => {
             if length < 1 { eprintln!("error: --length must be >= 1"); std::process::exit(1); }
             let src = src.canonicalize().unwrap_or_else(|e| { eprintln!("error: {}: {e}", src.display()); std::process::exit(1); });
             let target = match target {
                 Some(t) => { std::fs::create_dir_all(&t).ok(); t.canonicalize().unwrap_or_else(|e| { eprintln!("error: {}: {e}", t.display()); std::process::exit(1); }) }
                 None => src.clone(),
             };
-            hash_bucket::run(&src, &target, length, !mv, dry_run)
+            hash_bucket::run(&src, &target, length, cp, dry_run)
         }
     };
     if code != 0 { std::process::exit(1); }

@@ -4,7 +4,7 @@
 
 Cargo workspace of macOS file utility CLI tools. Each tool is its own crate with `lib.rs` (logic) and `main.rs` (CLI). The `fsutils` crate re-exports all tools as subcommands.
 
-Crates: mvsum, ddup, dss, ssim, fix-ext, fsutils.
+Crates: mvsum, ddup, dss, ssim, fix-ext, hash-bucket, fsutils.
 
 ## Conventions
 
@@ -22,7 +22,7 @@ When adding a new tool, update all of:
 
 ## Building
 
-`cargo build --release` must be run to update the binaries in `target/release/`.
+After any Rust source changes, always run `cargo build --release` to keep binaries in `target/release/` up to date.
 
 `install.sh` builds release and symlinks all tool binaries into `~/bin`.
 
