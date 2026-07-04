@@ -10,6 +10,6 @@ cargo build --release --manifest-path "$REPO/Cargo.toml"
 for tool in fsutils mvsum ddup dss ssim fix-ext hash-bucket; do
     src="$REPO/target/release/$tool"
     dst="$BIN_DIR/$tool"
-    ln -sf "$src" "$dst"
-    echo "linked $dst -> $src"
+    cp "$src" "$dst"
+    echo "installed $dst"
 done
